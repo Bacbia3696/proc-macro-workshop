@@ -22,10 +22,24 @@ pub fn derive(input: TokenStream) -> TokenStream {
             #ident: Option<#ty>
         }
     });
+    let setters = fields.iter().map(|e| {
+        let ident = &e.ident;
+        let ty = &e.ty;
+        quote! {
+            fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                self.#ident = Some(#ident);
+                self
+            }
+        }
+    });
 
     let expanded = quote! {
         pub struct #builder_name {
             #(#attr_opts),*
+        }
+
+        impl #builder_name {
+            #(#setters)*
         }
 
         impl Command {
