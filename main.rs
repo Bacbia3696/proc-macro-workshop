@@ -1,13 +1,14 @@
-// Generate methods on the builder for setting a value of each of the struct
-// fields.
+// Generate a `build` method to go from builder to original struct.
+//
+// This method should require that every one of the fields has been explicitly
+// set; it should return an error if a field is missing. The precise error type
+// is not important. Consider using Box<dyn Error>, which you can construct
+// using the impl From<String> for Box<dyn Error>.
 //
 //     impl CommandBuilder {
-//         fn executable(&mut self, executable: String) -> &mut Self {
-//             self.executable = Some(executable);
-//             self
+//         pub fn build(&mut self) -> Result<Command, Box<dyn Error>> {
+//             ...
 //         }
-//
-//         ...
 //     }
 
 use derive_builder::Builder;
@@ -26,4 +27,7 @@ fn main() {
     builder.args(vec!["build".to_owned(), "--release".to_owned()]);
     builder.env(vec![]);
     builder.current_dir("..".to_owned());
+
+    let command = builder.build().unwrap();
+    assert_eq!(command.executable, "cargo");
 }
