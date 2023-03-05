@@ -9,42 +9,62 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let builder_name = quote::format_ident!("{}Builder", input.ident);
     let fields = get_all_fields(input.data.clone());
 
-    let mut attr_none: Vec<proc_macro2::TokenStream> = vec![];
-    let mut attr_opts: Vec<proc_macro2::TokenStream> = vec![];
+    let mut builder_values: Vec<proc_macro2::TokenStream> = vec![];
+    let mut ty_fields: Vec<proc_macro2::TokenStream> = vec![];
     let mut setters: Vec<proc_macro2::TokenStream> = vec![];
-    let mut attr_opt_errs: Vec<proc_macro2::TokenStream> = vec![];
+    let mut build_values: Vec<proc_macro2::TokenStream> = vec![];
 
     fields.iter().for_each(|e| {
         let ident = &e.ident;
         let ty = &e.ty;
         let inner_option = get_inner(ty, "Option");
-        // attr_none
-        attr_none.push(quote! {
-            #ident: None,
-        });
-        // attr_opts
-        attr_opts.push(if inner_option.is_none() {
-            quote! {
-                #ident: Option<#ty>,
-            }
-        } else {
+        let inner_vec = get_inner(ty, "Vec");
+        let attr = &get_attr(e);
+        builder_values.push(
+            // if have attr, it will be vec
+            if attr.is_some() {
+                quote! {
+                    #ident: vec![],
+                }
+            } else {
+                quote! {
+                    #ident: None,
+                }
+            },
+        );
+        ty_fields.push(if inner_option.is_some() || attr.is_some() {
             quote! {
                 #ident: #ty,
             }
+        } else {
+            quote! {
+                #ident: Option<#ty>,
+            }
         });
-        // setters
         let mut ty_option = ty;
         if let Some(ref inner) = inner_option {
             ty_option = inner;
         }
-        setters.push(quote! {
-            fn #ident(&mut self, #ident: #ty_option) -> &mut Self {
-                self.#ident = Some(#ident);
-                self
+        setters.push(if let Some(lit) = attr {
+            let mut lit = lit.to_string();
+            lit.pop();
+            lit.remove(0);
+            let lit = quote::format_ident!("{lit}");
+            quote! {
+                fn #lit(&mut self, val: #inner_vec) -> &mut Self {
+                    self.#ident.push(val);
+                    self
+                }
+            }
+        } else {
+            quote! {
+                fn #ident(&mut self, #ident: #ty_option) -> &mut Self {
+                    self.#ident = Some(#ident);
+                    self
+                }
             }
         });
-        // attr_opt_errs
-        attr_opt_errs.push(if inner_option.is_some() {
+        build_values.push(if inner_option.is_some() || attr.is_some() {
             quote! {
                 #ident: self.#ident.clone(),
             }
@@ -62,44 +82,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let build_method = quote! {
         pub fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
             Ok(#name {
-                #(#attr_opt_errs)*
+                #(#build_values)*
             })
         }
     };
 
-    // let setters_with_attrs = fields.iter().map(|e| {
-    //     let ident = &e.ident;
-    //     let ty = &e.ty;
-    //
-    //     // NOTE: extract the value of attribute builder
-    //     if let Some(lits) = get_attrs(e) {
-    //         // check
-    //         if let proc_macro2::TokenTree::Literal(ref lit) = lits[0] {
-    //             if lit.to_string() != "each" {
-    //                 panic!("you are wrong")
-    //             }
-    //         }
-    //
-    //         if let proc_macro2::TokenTree::Literal(ref lit) = lits[2] {
-    //             let mut lit = lit.to_string();
-    //             lit.pop();
-    //             lit.remove(0);
-    //             let lit = quote::format_ident!("{lit}");
-    //             let inner = get_inner(ty, "Vec");
-    //             return quote! {
-    //                 fn #lit(&mut self, val: #inner) -> &mut Self {
-    //                     self.#ident.push(val);
-    //                     self
-    //                 }
-    //             };
-    //         };
-    //     }
-    //     quote!()
-    // });
-
     quote! {
         pub struct #builder_name {
-            #(#attr_opts)*
+            #(#ty_fields)*
         }
 
         impl #builder_name {
@@ -111,7 +101,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         impl Command {
             pub fn builder() -> #builder_name {
                 CommandBuilder {
-                    #(#attr_none)*
+                    #(#builder_values)*
                 }
             }
         }
@@ -156,10 +146,15 @@ fn get_inner(ty: &syn::Type, name: &str) -> Option<syn::Type> {
     None
 }
 
-fn get_attrs(e: &syn::Field) -> Option<Vec<proc_macro2::TokenTree>> {
+// get first attribute if exist
+fn get_attr(e: &syn::Field) -> Option<proc_macro2::TokenTree> {
     let syn::Attribute { tokens, .. } = &e.attrs.get(0)?;
     if let proc_macro2::TokenTree::Group(group) = tokens.clone().into_iter().next()? {
-        return Some(group.stream().into_iter().collect());
+        let attrs: Vec<_> = group.stream().into_iter().collect();
+        if attrs[0].to_string() != "each" {
+            panic!("You are dead wrong");
+        }
+        return Some(attrs[2].clone());
     }
     None
 }
