@@ -1,28 +1,30 @@
-// Ensure that your macro reports a reasonable error message when the caller
-// mistypes the inert attribute in various ways. This is a compile_fail test.
+// Does your macro still work if some of the standard library prelude item names
+// mean something different in the caller's code?
 //
-// The preferred way to report an error from a procedural macro is by including
-// an invocation of the standard library's compile_error macro in the code
-// emitted by the procedural macro.
+// It may seem unreasonable to consider this case, but it does arise in
+// practice. Most commonly for Result, where crates sometimes use a Result type
+// alias with a single type parameter which assumes their crate's error type.
+// Such a type alias would break macro-generated code that expects Result to
+// have two type parameters. As another example, Hyper 0.10 used to define
+// hyper::Ok as a re-export of hyper::status::StatusCode::Ok which is totally
+// different from Result::Ok. This caused problems in code doing `use hyper::*`
+// together with macro-generated code referring to Ok.
 //
-//
-// Resources:
-//
-//   - The compile_error macro for emitting basic custom errors:
-//     https://doc.rust-lang.org/std/macro.compile_error.html
-//
-//   - Lowering a syn::Error into an invocation of compile_error:
-//     https://docs.rs/syn/1.0/syn/struct.Error.html#method.to_compile_error
+// Generally all macros (procedural as well as macro_rules) designed to be used
+// by other people should refer to every single thing in their expanded code
+// through an absolute path, such as std::result::Result.
 
 use derive_builder::Builder;
+
+type Option = ();
+type Some = ();
+type None = ();
+type Result = ();
+type Box = ();
 
 #[derive(Builder)]
 pub struct Command {
     executable: String,
-    #[builder(eac = "arg")]
-    args: Vec<String>,
-    env: Vec<String>,
-    current_dir: Option<String>,
 }
 
 fn main() {}

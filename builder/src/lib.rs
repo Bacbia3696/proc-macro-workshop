@@ -29,7 +29,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             } else {
                 quote! {
-                    #ident: None,
+                    #ident: ::std::option::Option::None,
                 }
             },
         );
@@ -39,7 +39,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         } else {
             quote! {
-                #ident: Option<#ty>,
+                #ident: ::std::option::Option<#ty>,
             }
         });
         let mut ty_option = ty;
@@ -87,7 +87,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     }
 
     let build_method = quote! {
-        pub fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
+        pub fn build(&mut self) -> ::std::result::Result<#name, ::std::boxed::Box<dyn ::std::error::Error>> {
             Ok(#name {
                 #(#build_values)*
             })
