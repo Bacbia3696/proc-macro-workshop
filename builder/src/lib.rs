@@ -1,8 +1,6 @@
-use core::panic;
-
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DataStruct, DeriveInput, Field, Fields, FieldsNamed, Token};
+use syn::{spanned::Spanned, DataStruct, DeriveInput, Field, Fields, FieldsNamed, Token};
 
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -16,7 +14,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let mut setters: Vec<proc_macro2::TokenStream> = vec![];
     let mut build_values: Vec<proc_macro2::TokenStream> = vec![];
 
-    fields.iter().for_each(|e| {
+    for e in fields.iter() {
         let ident = &e.ident;
         let ty = &e.ty;
         let inner_option = get_inner("Option", ty);
@@ -49,12 +47,20 @@ pub fn derive(input: TokenStream) -> TokenStream {
             ty_option = inner;
         }
         setters.push(if let Some(ref m) = meta {
-            let lit = get_lit_from_meta(m).unwrap().value();
-            let lit_ident = quote::format_ident!("{lit}");
-            quote! {
-                fn #lit_ident(&mut self, val: #inner_vec) -> &mut Self {
-                    self.#ident.push(val);
-                    self
+            match get_lit_from_meta(m) {
+                Ok(lit) => {
+                    let lit_ident = quote::format_ident!("{}", lit.value());
+                    quote! {
+                        fn #lit_ident(&mut self, val: #inner_vec) -> &mut Self {
+                            self.#ident.push(val);
+                            self
+                        }
+                    }
+                }
+                Err(err) => {
+                    return syn::Error::new(meta.span(), err.to_string())
+                        .into_compile_error()
+                        .into();
                 }
             }
         } else {
@@ -78,7 +84,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 #ident: self.#ident.clone().ok_or(#lit)?,
             }
         })
-    });
+    }
 
     let build_method = quote! {
         pub fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
@@ -151,23 +157,24 @@ fn get_meta(e: &syn::Field) -> Option<syn::Meta> {
 }
 
 fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::Error>> {
+    let err = Err("expected `builder(each = \"...\")`");
     if let syn::Meta::List(syn::MetaList { path, nested, .. }) = m {
         if path.segments.first().unwrap().ident != "builder" {
-            panic!("You are wroing!")
+            return err?;
         }
         if let syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
             path, lit, ..
         })) = &nested[0]
         {
             if path.segments.first().unwrap().ident != "each" {
-                panic!("You are wrong!")
+                return err?;
             }
             if let syn::Lit::Str(ls) = lit {
                 return Ok(ls);
             } else {
-                panic!("You are wroing!")
+                return err?;
             }
         }
     }
-    panic!("You are wroing!")
+    err?
 }

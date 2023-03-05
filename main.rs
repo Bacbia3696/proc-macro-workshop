@@ -1,54 +1,28 @@
-// The std::process::Command builder handles args in a way that is potentially
-// more convenient than passing a full vector of args to the builder all at
-// once.
+// Ensure that your macro reports a reasonable error message when the caller
+// mistypes the inert attribute in various ways. This is a compile_fail test.
 //
-// Look for a field attribute #[builder(each = "...")] on each field. The
-// generated code may assume that fields with this attribute have the type Vec
-// and should use the word given in the string literal as the name for the
-// corresponding builder method which accepts one vector element at a time.
-//
-// In order for the compiler to know that these builder attributes are
-// associated with your macro, they must be declared at the entry point of the
-// derive macro. Otherwise the compiler will report them as unrecognized
-// attributes and refuse to compile the caller's code.
-//
-//     #[proc_macro_derive(Builder, attributes(builder))]
-//
-// These are called inert attributes. The word "inert" indicates that these
-// attributes do not correspond to a macro invocation on their own; they are
-// simply looked at by other macro invocations.
-//
-// If the new one-at-a-time builder method is given the same name as the field,
-// avoid generating an all-at-once builder method for that field because the
-// names would conflict.
+// The preferred way to report an error from a procedural macro is by including
+// an invocation of the standard library's compile_error macro in the code
+// emitted by the procedural macro.
 //
 //
 // Resources:
 //
-//   - Relevant syntax tree types:
-//     https://docs.rs/syn/1.0/syn/struct.Attribute.html
-//     https://docs.rs/syn/1.0/syn/enum.Meta.html
+//   - The compile_error macro for emitting basic custom errors:
+//     https://doc.rust-lang.org/std/macro.compile_error.html
+//
+//   - Lowering a syn::Error into an invocation of compile_error:
+//     https://docs.rs/syn/1.0/syn/struct.Error.html#method.to_compile_error
 
 use derive_builder::Builder;
 
 #[derive(Builder)]
 pub struct Command {
     executable: String,
-    #[builder(each = "arg")]
+    #[builder(eac = "arg")]
     args: Vec<String>,
-    #[builder(each = "env")]
     env: Vec<String>,
     current_dir: Option<String>,
 }
 
-fn main() {
-    let command = Command::builder()
-        .executable("cargo".to_owned())
-        .arg("build".to_owned())
-        .arg("--release".to_owned())
-        .build()
-        .unwrap();
-
-    assert_eq!(command.executable, "cargo");
-    assert_eq!(command.args, vec!["build", "--release"]);
-}
+fn main() {}
