@@ -1,3 +1,5 @@
+use core::panic;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DataStruct, DeriveInput, Field, Fields, FieldsNamed, Token};
@@ -7,7 +9,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let builder_name = quote::format_ident!("{}Builder", input.ident);
-    let fields = get_all_fields(input.data.clone());
+    let fields = get_all_fields(&input.data);
 
     let mut builder_values: Vec<proc_macro2::TokenStream> = vec![];
     let mut ty_fields: Vec<proc_macro2::TokenStream> = vec![];
@@ -17,12 +19,13 @@ pub fn derive(input: TokenStream) -> TokenStream {
     fields.iter().for_each(|e| {
         let ident = &e.ident;
         let ty = &e.ty;
-        let inner_option = get_inner(ty, "Option");
-        let inner_vec = get_inner(ty, "Vec");
-        let attr = &get_attr(e);
+        let inner_option = get_inner("Option", ty);
+        let inner_vec = get_inner("Vec", ty);
+        let meta = get_meta(e);
+
         builder_values.push(
             // if have attr, it will be vec
-            if attr.is_some() {
+            if meta.is_some() {
                 quote! {
                     #ident: vec![],
                 }
@@ -32,7 +35,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             },
         );
-        ty_fields.push(if inner_option.is_some() || attr.is_some() {
+        ty_fields.push(if inner_option.is_some() || meta.is_some() {
             quote! {
                 #ident: #ty,
             }
@@ -42,16 +45,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         });
         let mut ty_option = ty;
-        if let Some(ref inner) = inner_option {
+        if let Some(inner) = inner_option {
             ty_option = inner;
         }
-        setters.push(if let Some(lit) = attr {
-            let mut lit = lit.to_string();
-            lit.pop();
-            lit.remove(0);
-            let lit = quote::format_ident!("{lit}");
+        setters.push(if let Some(ref m) = meta {
+            let lit = get_lit_from_meta(m).unwrap().value();
+            let lit_ident = quote::format_ident!("{lit}");
             quote! {
-                fn #lit(&mut self, val: #inner_vec) -> &mut Self {
+                fn #lit_ident(&mut self, val: #inner_vec) -> &mut Self {
                     self.#ident.push(val);
                     self
                 }
@@ -64,7 +65,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             }
         });
-        build_values.push(if inner_option.is_some() || attr.is_some() {
+        build_values.push(if inner_option.is_some() || meta.is_some() {
             quote! {
                 #ident: self.#ident.clone(),
             }
@@ -94,7 +95,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         impl #builder_name {
             #(#setters)*
-            // #(#setters_with_attrs)*
             #build_method
         }
 
@@ -110,7 +110,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 }
 
 // extract struct data
-fn get_all_fields(data: syn::Data) -> syn::punctuated::Punctuated<Field, Token![,]> {
+fn get_all_fields(data: &syn::Data) -> &syn::punctuated::Punctuated<Field, Token![,]> {
     if let syn::Data::Struct(DataStruct {
         fields: Fields::Named(FieldsNamed { named, .. }),
         ..
@@ -121,14 +121,14 @@ fn get_all_fields(data: syn::Data) -> syn::punctuated::Punctuated<Field, Token![
     unimplemented!()
 }
 
-fn get_inner(ty: &syn::Type, name: &str) -> Option<syn::Type> {
+fn get_inner<'a>(wrapper: &str, ty: &'a syn::Type) -> Option<&'a syn::Type> {
     if let syn::Type::Path(syn::TypePath {
         path: syn::Path { segments, .. },
         ..
     }) = ty
     {
         let v: Vec<_> = segments.iter().map(|e| e.ident.to_string()).collect();
-        if v.last()? == name {
+        if v.last()? == wrapper {
             if let syn::PathSegment {
                 arguments:
                     syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
@@ -138,7 +138,7 @@ fn get_inner(ty: &syn::Type, name: &str) -> Option<syn::Type> {
             } = segments.last()?
             {
                 if let syn::GenericArgument::Type(tp) = args.first()? {
-                    return Some(tp.clone());
+                    return Some(tp);
                 }
             }
         }
@@ -146,15 +146,28 @@ fn get_inner(ty: &syn::Type, name: &str) -> Option<syn::Type> {
     None
 }
 
-// get first attribute if exist
-fn get_attr(e: &syn::Field) -> Option<proc_macro2::TokenTree> {
-    let syn::Attribute { tokens, .. } = &e.attrs.get(0)?;
-    if let proc_macro2::TokenTree::Group(group) = tokens.clone().into_iter().next()? {
-        let attrs: Vec<_> = group.stream().into_iter().collect();
-        if attrs[0].to_string() != "each" {
-            panic!("You are dead wrong");
+fn get_meta(e: &syn::Field) -> Option<syn::Meta> {
+    e.attrs.get(0)?.parse_meta().ok()
+}
+
+fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::Error>> {
+    if let syn::Meta::List(syn::MetaList { path, nested, .. }) = m {
+        if path.segments.first().unwrap().ident != "builder" {
+            panic!("You are wroing!")
         }
-        return Some(attrs[2].clone());
+        if let syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
+            path, lit, ..
+        })) = &nested[0]
+        {
+            if path.segments.first().unwrap().ident != "each" {
+                panic!("You are wrong!")
+            }
+            if let syn::Lit::Str(ls) = lit {
+                return Ok(ls);
+            } else {
+                panic!("You are wroing!")
+            }
+        }
     }
-    None
+    panic!("You are wroing!")
 }
