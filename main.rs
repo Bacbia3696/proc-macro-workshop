@@ -1,73 +1,97 @@
-// Some generic types implement Debug even when their type parameters do not.
-// One example is PhantomData which has this impl:
+// This test case should not require any code change in your macro if you have
+// everything up to this point already passing, but is here to demonstrate why
+// inferring `#field_ty: Trait` bounds as mentioned in the previous test case is
+// not viable.
 //
-//     impl<T: ?Sized> Debug for PhantomData<T> {...}
+//     #[derive(CustomDebug)]
+//     pub struct One<T> {
+//         value: T,
+//         two: Option<Box<Two<T>>>,
+//     }
 //
-// To accomodate this sort of situation, one way would be to generate a trait
-// bound `#field_ty: Debug` for each field type in the input, rather than
-// `#param: Debug` for each generic parameter. For example in the case of the
-// struct Field<T> in the test case below, it would be:
+//     #[derive(CustomDebug)]
+//     struct Two<T> {
+//         one: Box<One<T>>,
+//     }
 //
-//     impl<T> Debug for Field<T>
+// The problematic expansion would come out as:
+//
+//     impl<T> Debug for One<T>
 //     where
-//         PhantomData<T>: Debug,
+//         T: Debug,
+//         Option<Box<Two<T>>>: Debug,
 //     {...}
 //
-// This approach has fatal downsides that will be covered in subsequent test
-// cases.
+//     impl<T> Debug for Two<T>
+//     where
+//         Box<One<T>>: Debug,
+//     {...}
 //
-// Instead we'll recognize PhantomData as a special case since it is so common,
-// and later provide an escape hatch for the caller to override inferred bounds
-// in other application-specific special cases.
+// There are two things wrong here.
 //
-// Concretely, for each type parameter #param in the input, you will need to
-// determine whether it is only ever mentioned inside of a PhantomData and if so
-// then avoid emitting a `#param: Debug` bound on that parameter. For the
-// purpose of the test suite it is sufficient to look for exactly the field type
-// PhantomData<#param>. In reality we may also care about recognizing other
-// possible arrangements like PhantomData<&'a #param> if the semantics of the
-// trait we are deriving would make it likely that callers would end up with
-// that sort of thing in their code.
+// First, taking into account the relevant standard library impls `impl<T> Debug
+// for Option<T> where T: Debug` and `impl<T> Debug for Box<T> where T: ?Sized +
+// Debug`, we have the following cyclic definition:
 //
-// Notice that we are into the realm of heuristics at this point. In Rust's
-// macro system it is not possible for a derive macro to infer the "correct"
-// bounds in general. Doing so would require name-resolution, i.e. the ability
-// for the macro to look up what trait impl corresponds to some field's type by
-// name. The Rust compiler has chosen to perform all macro expansion fully
-// before name resolution (not counting name resolution of macros themselves,
-// which operates in a more restricted way than Rust name resolution in general
-// to make this possible).
+//   - One<T> implements Debug if there is an impl for Option<Box<Two<T>>>;
+//   - Option<Box<Two<T>>> implements Debug if there is an impl for Box<Two<T>>;
+//   - Box<Two<T>> implements Debug if there is an impl for Two<T>;
+//   - Two<T> implements Debug if there is an impl for Box<One<T>>;
+//   - Box<One<T>> implements Debug if there is an impl for One<T>; cycle!
 //
-// The clean separation between macro expansion and name resolution has huge
-// advantages that outweigh the limitation of not being able to expose type
-// information to procedural macros, so there are no plans to change it. Instead
-// macros rely on domain-specific heuristics and escape hatches to substitute
-// for type information where unavoidable or, more commonly, rely on the Rust
-// trait system to defer the need for name resolution. In particular pay
-// attention to how the derive macro invocation below is able to expand to code
-// that correctly calls String's Debug impl despite having no way to know that
-// the word "S" in its input refers to the type String.
+// The Rust compiler detects and rejects this cycle by refusing to assume that
+// an impl for any of these types exists out of nowhere. The error manifests as:
+//
+//     error[E0275]: overflow evaluating the requirement `One<u8>: std::fmt::Debug`
+//      -->
+//       |     assert_debug::<One<u8>>();
+//       |     ^^^^^^^^^^^^^^^^^^^^^^^
+//
+// There is a technique known as co-inductive reasoning that may allow a
+// revamped trait solver in the compiler to process cycles like this in the
+// future, though there is still uncertainty about whether co-inductive
+// semantics would lead to unsoundness in some situations when applied to Rust
+// trait impls. There is no current activity pursuing this but some discussion
+// exists in a GitHub issue called "#[derive] sometimes uses incorrect bounds":
+// https://github.com/rust-lang/rust/issues/26925
+//
+// The second thing wrong is a private-in-public violation:
+//
+//     error[E0446]: private type `Two<T>` in public interface
+//      -->
+//       |   struct Two<T> {
+//       |   - `Two<T>` declared as private
+//     ...
+//       | / impl<T> Debug for One<T>
+//       | | where
+//       | |     T: Debug,
+//       | |     Option<Box<Two<T>>>: Debug,
+//     ... |
+//       | | }
+//       | |_^ can't leak private type
+//
+// Public APIs in Rust are not allowed to be defined in terms of private types.
+// That includes the argument types and return types of public function
+// signatures, as well as trait bounds on impls of public traits for public
+// types.
 
 use derive_debug::CustomDebug;
 use std::fmt::Debug;
-use std::marker::PhantomData;
-
-type S = String;
 
 #[derive(CustomDebug)]
-pub struct Field<T> {
-    marker: std::marker::PhantomData<T>,
-    string: S,
-    #[debug = "0b{:08b}"]
-    bitmask: u8,
+pub struct One<T> {
+    value: T,
+    two: Option<Box<Two<T>>>,
+}
+
+#[derive(CustomDebug)]
+struct Two<T> {
+    one: Box<One<T>>,
 }
 
 fn assert_debug<F: Debug>() {}
 
 fn main() {
-    // Does not implement Debug.
-    struct NotDebug;
-
-    assert_debug::<PhantomData<NotDebug>>();
-    assert_debug::<Field<NotDebug>>();
+    assert_debug::<One<u8>>();
+    assert_debug::<Two<u8>>();
 }
