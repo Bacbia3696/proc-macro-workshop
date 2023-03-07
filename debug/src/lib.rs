@@ -5,12 +5,17 @@ use syn::{parse_macro_input, DeriveInput};
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    // dbg!(&input);
     let ident = &input.ident;
     let ident_lit = syn::LitStr::new(&ident.to_string(), proc_macro2::Span::call_site());
     let mut field_methods = vec![];
 
     let fields = get_fields(&input);
     // dbg!(fields);
+    let generics = add_trait_bounds(input.generics.clone());
+
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    // dbg!(&impl_generics, &ty_generics, &where_clause);
 
     for f in fields.iter() {
         let meta = get_meta(f);
@@ -38,7 +43,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     }
 
     quote! {
-        impl ::std::fmt::Debug for #ident {
+        impl #impl_generics ::std::fmt::Debug for #ident #ty_generics #where_clause {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 f.debug_struct(#ident_lit)
                     #(.#field_methods)*
@@ -76,4 +81,13 @@ fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::
         }
     }
     err?
+}
+// Add a bound `T: Debug` to every type parameter T.
+fn add_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+    for param in &mut generics.params {
+        if let syn::GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(syn::parse_quote!(std::fmt::Debug));
+        }
+    }
+    generics
 }

@@ -1,53 +1,40 @@
-// Look for a field attribute #[debug = "..."] on each field. If present, find a
-// way to format the field according to the format string given by the caller in
-// the attribute.
+// Figure out what impl needs to be generated for the Debug impl of Field<T>.
+// This will involve adding a trait bound to the T type parameter of the
+// generated impl.
 //
-// In order for the compiler to recognize this inert attribute as associated
-// with your derive macro, it will need to be declared at the entry point of the
-// derive macro.
-//
-//     #[proc_macro_derive(CustomDebug, attributes(debug))]
-//
-// These are called inert attributes. The word "inert" indicates that these
-// attributes do not correspond to a macro invocation on their own; they are
-// simply looked at by other macro invocations.
+// Callers should be free to instantiate Field<T> with a type parameter T which
+// does not implement Debug, but such a Field<T> will not fulfill the trait
+// bounds of the generated Debug impl and so will not be printable via Debug.
 //
 //
 // Resources:
 //
-//   - Relevant syntax tree types:
-//     https://docs.rs/syn/1.0/syn/struct.Attribute.html
-//     https://docs.rs/syn/1.0/syn/enum.Meta.html
+//   - Representation of generics in the Syn syntax tree:
+//     https://docs.rs/syn/1.0/syn/struct.Generics.html
 //
-//   - Macro for applying a format string to some runtime value:
-//     https://doc.rust-lang.org/std/macro.format_args.html
+//   - A helper for placing generics into an impl signature:
+//     https://docs.rs/syn/1.0/syn/struct.Generics.html#method.split_for_impl
+//
+//   - Example code from Syn which deals with type parameters:
+//     https://github.com/dtolnay/syn/tree/master/examples/heapsize
 
 use derive_debug::CustomDebug;
 
 #[derive(CustomDebug)]
-pub struct Field {
-    name: &'static str,
+pub struct Field<T> {
+    value: T,
     #[debug = "0b{:08b}"]
     bitmask: u8,
 }
 
 fn main() {
     let f = Field {
-        name: "F",
+        value: "F",
         bitmask: 0b00011100,
     };
 
     let debug = format!("{:?}", f);
-    let expected = r#"Field { name: "F", bitmask: 0b00011100 }"#;
+    let expected = r#"Field { value: "F", bitmask: 0b00011100 }"#;
 
     assert_eq!(debug, expected);
 }
-
-// impl Debug for Field {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.debug_struct("Field")
-//             .field("name", &self.name)
-//             .field("bitmask", &format_args!("0b{:08b}", &self.bitmask))
-//             .finish()
-//     }
-// }
