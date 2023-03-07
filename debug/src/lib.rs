@@ -11,13 +11,32 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let mut field_methods = vec![];
 
     let fields = get_fields(&input);
-    // dbg!(fields);
-    let generics = add_trait_bounds(input.generics.clone());
-
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    // dbg!(&input.generics);
     // dbg!(&impl_generics, &ty_generics, &where_clause);
 
+    // ident of type that included in PhantomData
+    let mut phantom_types = vec![];
+
     for f in fields.iter() {
+        if let syn::Type::Path(syn::TypePath {
+            path: syn::Path { segments, .. },
+            ..
+        }) = &f.ty
+        {
+            let tp = segments.last().unwrap();
+            if tp.ident == "PhantomData" {
+                // dbg!(f);
+                if let syn::PathArguments::AngleBracketed(arg) = &tp.arguments {
+                    if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+                        path: syn::Path { segments, .. },
+                        ..
+                    })) = arg.args.first().unwrap()
+                    {
+                        phantom_types.push(&segments.first().unwrap().ident);
+                    }
+                }
+            }
+        }
         let meta = get_meta(f);
         // dbg!(&meta);
         let lit = syn::LitStr::new(
@@ -41,6 +60,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         })
     }
+
+    let generics = add_trait_bounds(input.generics.clone(), phantom_types);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
         impl #impl_generics ::std::fmt::Debug for #ident #ty_generics #where_clause {
@@ -82,9 +104,16 @@ fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::
     }
     err?
 }
+
 // Add a bound `T: Debug` to every type parameter T.
-fn add_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+fn add_trait_bounds(mut generics: syn::Generics, phantom_types: Vec<&syn::Ident>) -> syn::Generics {
+    // dbg!(&generics);
     for param in &mut generics.params {
+        if let syn::GenericParam::Type(tp) = param {
+            if phantom_types.contains(&&tp.ident) {
+                continue;
+            }
+        }
         if let syn::GenericParam::Type(ref mut type_param) = *param {
             type_param.bounds.push(syn::parse_quote!(std::fmt::Debug));
         }
