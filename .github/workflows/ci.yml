@@ -11,14 +11,16 @@ permissions:
   contents: read
 
 jobs:
-  check-compliled:
-    name: Rust check on nightly
+  lint:
+    name: Rust clippy on nightly
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo check
+        with:
+          components: clippy
+      - run: cargo clippy
 
   test:
     name: Project ${{matrix.project}}

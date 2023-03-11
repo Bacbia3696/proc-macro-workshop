@@ -11,61 +11,69 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let mut field_methods = vec![];
 
     let fields = get_fields(&input);
-    // dbg!(&input.generics);
-    // dbg!(&impl_generics, &ty_generics, &where_clause);
 
     // ident of type that included in PhantomData
     let mut phantom_types = vec![];
+    let mut ass_types = vec![];
+    let mut gen_idents = vec![];
+    input.generics.params.iter().for_each(|e| {
+        if let syn::GenericParam::Type(syn::TypeParam { ident, .. }) = e {
+            gen_idents.push(ident.clone());
+        }
+    });
 
     for f in fields.iter() {
-        if let syn::Type::Path(syn::TypePath {
+        if let Some(syn::Type::Path(syn::TypePath {
             path: syn::Path { segments, .. },
             ..
-        }) = &f.ty
+        })) = get_inner(Some("PhantomData"), &f.ty)
         {
-            let tp = segments.last().unwrap();
-            if tp.ident == "PhantomData" {
-                // dbg!(f);
-                if let syn::PathArguments::AngleBracketed(arg) = &tp.arguments {
-                    if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
-                        path: syn::Path { segments, .. },
-                        ..
-                    })) = arg.args.first().unwrap()
-                    {
-                        phantom_types.push(&segments.first().unwrap().ident);
-                    }
-                }
-            }
+            phantom_types.push(&segments[0].ident);
         }
+        if let Some(tt) = get_assosiate_type(&f.ty, &gen_idents) {
+            ass_types.push(tt);
+        };
         let meta = get_meta(f);
         // dbg!(&meta);
         let lit = syn::LitStr::new(
             &f.ident.as_ref().unwrap().to_string(),
             proc_macro2::Span::call_site(),
         );
-        let ident = &f.ident;
+        let field_ident = &f.ident;
         field_methods.push(if let Some(m) = meta {
             let lit_meta = get_lit_from_meta(&m);
             match lit_meta {
                 Ok(lit_meta) => {
                     quote! {
-                        field(#lit, &format_args!(#lit_meta, &self.#ident))
+                        field(#lit, &format_args!(#lit_meta, &self.#field_ident))
                     }
                 }
-                Err(_) => todo!(),
+                Err(_) => todo!("Handle case wrong attr name!"),
             }
         } else {
             quote! {
-                field(#lit, &self.#ident)
+                field(#lit, &self.#field_ident)
             }
         })
     }
 
-    let generics = add_trait_bounds(input.generics.clone(), phantom_types);
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let generics = add_trait_bounds(input.generics.clone(), &phantom_types, &ass_types);
+
+    let (impl_generics, ty_generics, _) = generics.split_for_impl();
+    let where_statement: Vec<_> = ass_types
+        .iter()
+        .map(|e| {
+            quote! {
+                #e : ::std::fmt::Debug,
+            }
+        })
+        .collect();
+    // dbg!(&where_statement);
 
     quote! {
-        impl #impl_generics ::std::fmt::Debug for #ident #ty_generics #where_clause {
+        impl #impl_generics ::std::fmt::Debug for #ident #ty_generics
+        where #(#where_statement)*
+        {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 f.debug_struct(#ident_lit)
                     #(.#field_methods)*
@@ -95,7 +103,7 @@ fn get_meta(f: &syn::Field) -> Option<syn::Meta> {
 fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::Error>> {
     let err = Err("Wrong sytax");
     if let syn::Meta::NameValue(syn::MetaNameValue { path, lit, .. }) = m {
-        if path.segments.first().unwrap().ident != "debug" {
+        if path.segments[0].ident != "debug" {
             return err?;
         }
         if let syn::Lit::Str(lt) = lit {
@@ -106,11 +114,19 @@ fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::
 }
 
 // Add a bound `T: Debug` to every type parameter T.
-fn add_trait_bounds(mut generics: syn::Generics, phantom_types: Vec<&syn::Ident>) -> syn::Generics {
+// exclude bound in PhantomData
+fn add_trait_bounds(
+    mut generics: syn::Generics,
+    phantom_types: &[&syn::Ident],
+    ass_types: &[&syn::Path],
+) -> syn::Generics {
     // dbg!(&generics);
+
+    let ass_idents: Vec<_> = ass_types.iter().map(|e| &e.segments[0].ident).collect();
+
     for param in &mut generics.params {
         if let syn::GenericParam::Type(tp) = param {
-            if phantom_types.contains(&&tp.ident) {
+            if phantom_types.contains(&&tp.ident) || ass_idents.contains(&&tp.ident) {
                 continue;
             }
         }
@@ -119,4 +135,45 @@ fn add_trait_bounds(mut generics: syn::Generics, phantom_types: Vec<&syn::Ident>
         }
     }
     generics
+}
+
+fn get_inner<'a>(wrapper: Option<&str>, ty: &'a syn::Type) -> Option<&'a syn::Type> {
+    if let syn::Type::Path(syn::TypePath {
+        path: syn::Path { segments, .. },
+        ..
+    }) = ty
+    {
+        let v: Vec<_> = segments.iter().map(|e| e.ident.to_string()).collect();
+        if wrapper.is_none() || v.last()? == wrapper.unwrap() {
+            if let syn::PathSegment {
+                arguments:
+                    syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                        args, ..
+                    }),
+                ..
+            } = segments.last()?
+            {
+                if let syn::GenericArgument::Type(tp) = args.first()? {
+                    return Some(tp);
+                }
+            }
+        }
+    }
+    None
+}
+
+// check if first segment of ty in included in Vec of trait
+fn get_assosiate_type<'a>(
+    ty: &'a syn::Type,
+    gen_idents: &Vec<syn::Ident>,
+) -> Option<&'a syn::Path> {
+    if let Some(inner) = get_inner(None, ty) {
+        return get_assosiate_type(inner, gen_idents);
+    };
+    if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
+        if path.segments.len() > 1 && gen_idents.contains(&path.segments[0].ident) {
+            return Some(path);
+        }
+    }
+    None
 }

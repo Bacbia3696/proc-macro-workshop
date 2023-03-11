@@ -159,14 +159,14 @@ fn get_meta(e: &syn::Field) -> Option<syn::Meta> {
 fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::Error>> {
     let err = Err("expected `builder(each = \"...\")`");
     if let syn::Meta::List(syn::MetaList { path, nested, .. }) = m {
-        if path.segments.first().unwrap().ident != "builder" {
+        if path.segments[0].ident != "builder" {
             return err?;
         }
         if let syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
             path, lit, ..
         })) = &nested[0]
         {
-            if path.segments.first().unwrap().ident != "each" {
+            if path.segments[0].ident != "each" {
                 return err?;
             }
             if let syn::Lit::Str(ls) = lit {
