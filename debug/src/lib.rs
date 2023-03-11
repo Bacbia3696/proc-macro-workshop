@@ -33,7 +33,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         if let Some(tt) = get_assosiate_type(&f.ty, &gen_idents) {
             ass_types.push(tt);
         };
-        let meta = get_meta(f);
+        let meta = get_meta(&f.attrs);
         // dbg!(&meta);
         let lit = syn::LitStr::new(
             &f.ident.as_ref().unwrap().to_string(),
@@ -57,10 +57,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         })
     }
 
-    let generics = add_trait_bounds(input.generics.clone(), &phantom_types, &ass_types);
-
-    let (impl_generics, ty_generics, _) = generics.split_for_impl();
-    let where_statement: Vec<_> = ass_types
+    let mut generics = input.generics.clone();
+    let mut where_statement: Vec<_> = ass_types
         .iter()
         .map(|e| {
             quote! {
@@ -68,6 +66,19 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         })
         .collect();
+    // dbg!(&ass_types);
+    if let Some(meta) = get_meta(&input.attrs) {
+        let lit = get_lit_from_meta(&meta).unwrap();
+        let val = lit.value();
+        let w: syn::WherePredicate =  syn::parse_str(&val).unwrap();
+        where_statement.clear();
+        where_statement.push(quote! {#w});
+    } else {
+        generics = add_trait_bounds(generics, &phantom_types, &ass_types);
+    }
+
+    let (impl_generics, ty_generics, _) = generics.split_for_impl();
+
     // dbg!(&where_statement);
 
     quote! {
@@ -96,19 +107,37 @@ fn get_fields(e: &syn::DeriveInput) -> &syn::punctuated::Punctuated<syn::Field, 
     }
 }
 
-fn get_meta(f: &syn::Field) -> Option<syn::Meta> {
-    f.attrs.get(0)?.parse_meta().ok()
+fn get_meta(attrs: &[syn::Attribute]) -> Option<syn::Meta> {
+    attrs.get(0)?.parse_meta().ok()
 }
 
 fn get_lit_from_meta(m: &syn::Meta) -> Result<&syn::LitStr, Box<dyn std::error::Error>> {
     let err = Err("Wrong sytax");
-    if let syn::Meta::NameValue(syn::MetaNameValue { path, lit, .. }) = m {
-        if path.segments[0].ident != "debug" {
-            return err?;
+    match m {
+        syn::Meta::NameValue(syn::MetaNameValue { path, lit, .. }) => {
+            if path.segments[0].ident != "debug" {
+                return err?;
+            }
+            if let syn::Lit::Str(lt) = lit {
+                return Ok(lt);
+            }
         }
-        if let syn::Lit::Str(lt) = lit {
-            return Ok(lt);
+        syn::Meta::List(syn::MetaList {
+            path: syn::Path { segments, .. },
+            nested,
+            ..
+        }) => {
+            if segments[0].ident == "debug" {
+                if let syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
+                    lit: syn::Lit::Str(str),
+                    ..
+                })) = &nested[0]
+                {
+                    return Ok(str);
+                }
+            }
         }
+        syn::Meta::Path(_) => todo!(),
     }
     err?
 }
@@ -120,8 +149,6 @@ fn add_trait_bounds(
     phantom_types: &[&syn::Ident],
     ass_types: &[&syn::Path],
 ) -> syn::Generics {
-    // dbg!(&generics);
-
     let ass_idents: Vec<_> = ass_types.iter().map(|e| &e.segments[0].ident).collect();
 
     for param in &mut generics.params {

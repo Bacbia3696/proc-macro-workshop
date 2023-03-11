@@ -12,7 +12,7 @@ https://github.com/dtolnay/proc-macro-workshop
 
 ![builder](https://progress-bar.dev/100/?title=builder&width=200)
 
-![debug](https://progress-bar.dev/80/?title=debug&width=200)
+![debug](https://progress-bar.dev/100/?title=debug&width=200)
 
 ![seq](https://progress-bar.dev/0/?title=seq&width=200)
 
